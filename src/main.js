@@ -260,12 +260,37 @@ const crawler = new CheerioCrawler({
     requestHandlerTimeoutSecs: 60,
     navigationTimeoutSecs: 60,
 
-    async requestHandler({ request, $, log }) {
+    async requestHandler({ request, $, log, body }) {
         const url = request.url;
 
         // Handle search results page
         if (url.includes('/search?')) {
             log.info(`🔍 Processing search page: ${url}`);
+
+            // DEBUG: Save HTML of first search page for inspection
+            if (!request.userData.debugLogged) {
+                const html = body ? body.toString() : $.html();
+                await Actor.setValue('DEBUG_SEARCH_HTML', html, { contentType: 'text/html' });
+                log.info('🐛 DEBUG: Saved search page HTML to Key-Value Store as "DEBUG_SEARCH_HTML"');
+                
+                // Log what selectors we're finding
+                const cardCount = $('div[data-testid="serp-ia-card"]').length;
+                const altCardCount = $('div[data-testid="searchResultBusiness"]').length;
+                const allDivsWithData = $('div[data-testid]').length;
+                
+                log.info(`🐛 DEBUG: Found ${cardCount} serp-ia-card elements`);
+                log.info(`🐛 DEBUG: Found ${altCardCount} searchResultBusiness elements`);
+                log.info(`🐛 DEBUG: Found ${allDivsWithData} total divs with data-testid`);
+                
+                // Sample a few data-testid values to see what's available
+                const testIds = new Set();
+                $('div[data-testid]').slice(0, 20).each((i, el) => {
+                    testIds.add($(el).attr('data-testid'));
+                });
+                log.info(`🐛 DEBUG: Sample data-testid values: ${Array.from(testIds).join(', ')}`);
+                
+                request.userData.debugLogged = true;
+            }
 
             // Find business cards on the current SERP
             const businesses = [];
