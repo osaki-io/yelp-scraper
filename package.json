@@ -19,7 +19,8 @@
   ],
   "dependencies": {
     "apify": "^3.0.0",
-    "crawlee": "^3.0.0"
+    "crawlee": "^3.0.0",
+    "playwright": "^1.48.2"
   },
   "author": "vormir",
   "license": "ISC"
