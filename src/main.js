@@ -15,6 +15,7 @@ const USER_AGENTS = [
 
 // Get random user agent
 const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+const CURRENT_UA = getRandomUserAgent();
 
 // Initialize the Actor
 await Actor.init();
@@ -47,7 +48,8 @@ let businessCount = 0;
 
 // Configure proxy (residential for anti-scraping)
 const proxyConfiguration = await Actor.createProxyConfiguration({
-    groups: ['RESIDENTIAL']
+    groups: ['RESIDENTIAL'],
+    countryCode: 'US'
 });
 console.log('🔒 Residential proxies enabled');
 
@@ -247,11 +249,14 @@ const crawler = new PlaywrightCrawler({
             maxErrorScore: 3
         }
     },
+    persistCookiesPerSession: true,
     maxRequestsPerCrawl: maxResults + 50,
-    maxConcurrency: 2, // Playwright uses more resources, limit concurrency
+    maxConcurrency: 1, // Lower concurrency to improve bypass reliability and session reuse
     maxRequestRetries: maxRetries,
     requestHandlerTimeoutSecs: 120,
-    navigationTimeoutSecs: 60,
+    navigationTimeoutSecs: 90,
+    // Allow handling of 403 pages inside requestHandler so we can debug/solve
+    blockedStatusCodes: [],
     
     // Playwright-specific browser options
     launchContext: {
@@ -268,20 +273,39 @@ const crawler = new PlaywrightCrawler({
 
     async requestHandler({ request, page, log, parseWithCheerio }) {
         const url = request.url;
-        
+
+        // Warmup handler: visit homepage to obtain cookies/session before search
+        if (request.userData.type === 'warmup') {
+            log.info('🔥 Warmup: Visiting Yelp homepage to establish cookies/session');
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+            // Try accepting cookie consent if present
+            try {
+                const acceptBtn = await page.$('button:has-text("Accept"), button:has-text("I agree"), [data-testid*="accept"]');
+                if (acceptBtn) {
+                    await acceptBtn.click().catch(() => {});
+                    await page.waitForTimeout(800);
+                }
+            } catch {}
+
+            const nextUrl = request.userData.startUrl;
+            if (nextUrl) {
+                log.info(`➡️ Enqueuing search URL after warmup: ${nextUrl}`);
+                await crawler.addRequests([{ url: nextUrl, userData: { type: 'search', ua: request.userData.ua } }]);
+            }
+            return;
+        }
+
         // Wait for page to load and handle anti-bot challenges
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
             log.warning('Network idle timeout - continuing anyway');
         });
-        
+
         // Small random delay to appear more human-like
         await page.waitForTimeout(1000 + Math.random() * 2000);
-        
-        // Parse with Cheerio for familiar API
-        const $ = await parseWithCheerio();
 
         // Handle search results page
         if (url.includes('/search?')) {
+            const $ = await parseWithCheerio();
             log.info(`🔍 Processing search page: ${url}`);
 
             // DEBUG: Save HTML of first search page for inspection
@@ -357,6 +381,7 @@ const crawler = new PlaywrightCrawler({
         }
         // Handle business detail page
         else if (url.includes('/biz/')) {
+            const $ = await parseWithCheerio();
             log.info(`📄 Processing business: ${url}`);
 
             const businessData = extractBusinessDetails($, url);
@@ -403,22 +428,36 @@ const crawler = new PlaywrightCrawler({
     // Pre-navigation hook for browser stealth
     preNavigationHooks: [
         async ({ page, request }, gotoOptions) => {
-            // Set extra headers
+            const ua = request.userData.ua || CURRENT_UA;
+
+            // Set extra headers (including UA) before navigation
             await page.setExtraHTTPHeaders({
-                'Accept-Language': 'en-US,en;q=0.9',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
                 'Referer': 'https://www.yelp.com/',
-                'sec-ch-ua': '"Chromium";v="120", "Not_A Brand";v="99"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"macOS"'
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1',
+                'DNT': '1',
+                'User-Agent': ua,
             });
 
-            // Override navigator.webdriver
-            await page.addInitScript(() => {
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            });
+            // Basic stealth tweaks
+            await page.addInitScript((uaInner) => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'userAgent', { get: () => uaInner });
+                Object.defineProperty(navigator, 'platform', { get: () => uaInner.includes('Macintosh') ? 'MacIntel' : 'Win32' });
+                window.chrome = window.chrome || { runtime: {} };
+                Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            }, ua);
+
+            // Randomize viewport slightly
+            const width = 1280 + Math.floor(Math.random() * 200);
+            const height = 800 + Math.floor(Math.random() * 200);
+            await page.setViewportSize({ width, height });
 
             // Add delay between requests
             if (delayBetweenRequests > 0) {
@@ -434,8 +473,8 @@ try {
     console.log(`🔗 Starting URL: ${startUrl}`);
 
     await crawler.run([{
-        url: startUrl,
-        userData: { type: 'search' }
+        url: 'https://www.yelp.com/',
+        userData: { type: 'warmup', startUrl, ua: CURRENT_UA }
     }]);
 
     console.log('\n🎉 Scraping completed!');
