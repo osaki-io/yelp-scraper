@@ -2,7 +2,7 @@
 // Production-quality scraper using Cheerio for optimal performance
 
 import { Actor } from 'apify';
-import { CheerioCrawler, Dataset } from 'crawlee';
+import { CheerioCrawler, Dataset, SessionPool } from 'crawlee';
 
 // User agent rotation for anti-scraping
 const USER_AGENTS = [
@@ -50,6 +50,16 @@ const proxyConfiguration = await Actor.createProxyConfiguration({
     groups: ['RESIDENTIAL']
 });
 console.log('🔒 Residential proxies enabled');
+
+// Session pool for persistent proxy sessions
+const sessionPool = await SessionPool.open({
+    maxPoolSize: 20,
+    sessionOptions: {
+        maxUsageCount: 50,
+        maxErrorScore: 3
+    }
+});
+console.log('🔄 Session pool initialized');
 
 // Build Yelp search URL
 const buildSearchUrl = (query, loc, offset = 0) => {
@@ -234,14 +244,20 @@ const extractReviews = ($, maxReviews) => {
     return reviews;
 };
 
-// Configure the crawler
+// Configure the crawler with SessionPool for Yelp
 const crawler = new CheerioCrawler({
     proxyConfiguration,
-    maxRequestsPerCrawl: maxResults + 50, // Buffer for search pages
-    maxConcurrency: 1, // Sequential to respect rate limits
+    useSessionPool: true,
+    sessionPoolOptions: {
+        maxPoolSize: 20,
+        sessionOptions: {
+            maxUsageCount: 50
+        }
+    },
+    maxRequestsPerCrawl: maxResults + 50,
+    maxConcurrency: 1,
     maxRequestRetries: maxRetries,
     requestHandlerTimeoutSecs: 60,
-
     navigationTimeoutSecs: 60,
 
     async requestHandler({ request, $, log }) {
