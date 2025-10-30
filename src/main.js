@@ -45,6 +45,12 @@ console.log(`   Include Reviews: ${includeReviews ? 'Yes' : 'No'}`);
 const scrapedBusinesses = new Set();
 let businessCount = 0;
 
+// Configure proxy (residential for anti-scraping)
+const proxyConfiguration = await Actor.createProxyConfiguration({
+    groups: ['RESIDENTIAL']
+});
+console.log('🔒 Residential proxies enabled');
+
 // Build Yelp search URL
 const buildSearchUrl = (query, loc, offset = 0) => {
     const params = new URLSearchParams({
@@ -241,6 +247,7 @@ const extractReviews = ($, maxReviews) => {
 
 // Configure the crawler
 const crawler = new CheerioCrawler({
+    proxyConfiguration,
     maxRequestsPerCrawl: maxResults + 50, // Buffer for search pages
     maxConcurrency: 1, // Sequential to respect rate limits
     maxRequestRetries: maxRetries,
