@@ -2,7 +2,7 @@
   "actorSpecification": 1,
   "name": "yelp-scraper",
   "title": "Yelp Business Scraper",
-  "description": "Fast, production-quality scraper for Yelp business data. Extracts business info, ratings, reviews, photos, hours, and more using Cheerio for optimal performance (<0.017 CU per 1K results).",
+  "description": "Production-quality scraper for Yelp business data with anti-bot bypass. Extracts business info, ratings, reviews, photos, hours, and more using Playwright browser automation. Bypasses Yelp's protection with residential proxies (~3-5 CU per 100 results).",
   "version": "1.0",
   "meta": {
     "templateId": "custom"

@@ -2,7 +2,7 @@
   "name": "yelp-scraper",
   "version": "1.0.0",
   "type": "module",
-  "description": "Production-quality Yelp business scraper using Cheerio",
+  "description": "Production-quality Yelp business scraper using Playwright for anti-bot bypass",
   "main": "src/main.js",
   "scripts": {
     "start": "node src/main.js",
@@ -13,7 +13,8 @@
     "scraper",
     "business",
     "reviews",
-    "cheerio",
+    "playwright",
+    "browser",
     "apify"
   ],
   "dependencies": {

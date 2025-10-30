@@ -1,8 +1,8 @@
 // Yelp Business Scraper Actor
-// Production-quality scraper using Cheerio for optimal performance
+// Production-quality scraper using Playwright for browser-based scraping
 
 import { Actor } from 'apify';
-import { CheerioCrawler, Dataset, SessionPool } from 'crawlee';
+import { PlaywrightCrawler, Dataset } from 'crawlee';
 
 // User agent rotation for anti-scraping
 const USER_AGENTS = [
@@ -51,15 +51,7 @@ const proxyConfiguration = await Actor.createProxyConfiguration({
 });
 console.log('🔒 Residential proxies enabled');
 
-// Session pool for persistent proxy sessions
-const sessionPool = await SessionPool.open({
-    maxPoolSize: 20,
-    sessionOptions: {
-        maxUsageCount: 50,
-        maxErrorScore: 3
-    }
-});
-console.log('🔄 Session pool initialized');
+console.log('🌐 Using Playwright with real browser for anti-bot bypass');
 
 // Build Yelp search URL
 const buildSearchUrl = (query, loc, offset = 0) => {
@@ -244,24 +236,52 @@ const extractReviews = ($, maxReviews) => {
     return reviews;
 };
 
-// Configure the crawler with SessionPool for Yelp
-const crawler = new CheerioCrawler({
+// Configure the crawler with Playwright for browser-based scraping
+const crawler = new PlaywrightCrawler({
     proxyConfiguration,
     useSessionPool: true,
     sessionPoolOptions: {
-        maxPoolSize: 20,
+        maxPoolSize: 10,
         sessionOptions: {
-            maxUsageCount: 50
+            maxUsageCount: 30,
+            maxErrorScore: 3
         }
     },
     maxRequestsPerCrawl: maxResults + 50,
-    maxConcurrency: 1,
+    maxConcurrency: 2, // Playwright uses more resources, limit concurrency
     maxRequestRetries: maxRetries,
-    requestHandlerTimeoutSecs: 60,
+    requestHandlerTimeoutSecs: 120,
     navigationTimeoutSecs: 60,
+    
+    // Playwright-specific browser options
+    launchContext: {
+        launcher: Actor.isAtHome() 
+            ? await Actor.newClient().getDefaultLauncher()
+            : undefined,
+        launchOptions: {
+            headless: true,
+            args: [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-web-security',
+                '--no-sandbox'
+            ]
+        }
+    },
 
-    async requestHandler({ request, $, log, body }) {
+    async requestHandler({ request, page, log, parseWithCheerio }) {
         const url = request.url;
+        
+        // Wait for page to load and handle anti-bot challenges
+        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
+            log.warning('Network idle timeout - continuing anyway');
+        });
+        
+        // Small random delay to appear more human-like
+        await page.waitForTimeout(1000 + Math.random() * 2000);
+        
+        // Parse with Cheerio for familiar API
+        const $ = await parseWithCheerio();
 
         // Handle search results page
         if (url.includes('/search?')) {
@@ -269,7 +289,7 @@ const crawler = new CheerioCrawler({
 
             // DEBUG: Save HTML of first search page for inspection
             if (!request.userData.debugLogged) {
-                const html = body ? body.toString() : $.html();
+                const html = await page.content();
                 await Actor.setValue('DEBUG_SEARCH_HTML', html, { contentType: 'text/html' });
                 log.info('🐛 DEBUG: Saved search page HTML to Key-Value Store as "DEBUG_SEARCH_HTML"');
                 
@@ -383,16 +403,25 @@ const crawler = new CheerioCrawler({
         log.error(`   Error: ${request.errorMessages?.join(', ')}`);
     },
 
-    // Pre-navigation hook for user agent rotation
+    // Pre-navigation hook for browser stealth
     preNavigationHooks: [
-        async ({ request, session }, gotoOptions) => {
-            gotoOptions.headers = {
-                ...gotoOptions.headers,
-                'User-Agent': getRandomUserAgent(),
+        async ({ page, request }, gotoOptions) => {
+            // Set extra headers
+            await page.setExtraHTTPHeaders({
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Referer': 'https://www.yelp.com/'
-            };
+                'Referer': 'https://www.yelp.com/',
+                'sec-ch-ua': '"Chromium";v="120", "Not_A Brand";v="99"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"macOS"'
+            });
+
+            // Override navigator.webdriver
+            await page.addInitScript(() => {
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            });
 
             // Add delay between requests
             if (delayBetweenRequests > 0) {
