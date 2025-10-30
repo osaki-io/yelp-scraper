@@ -255,9 +255,7 @@ const crawler = new PlaywrightCrawler({
     maxRequestRetries: maxRetries,
     requestHandlerTimeoutSecs: 120,
     navigationTimeoutSecs: 90,
-    // Allow handling of 403 pages inside requestHandler so we can debug/solve
-    blockedStatusCodes: [],
-    
+
     // Playwright-specific browser options
     launchContext: {
         launchOptions: {
@@ -418,6 +416,12 @@ const crawler = new PlaywrightCrawler({
             const progress = Math.round((businessCount / maxResults) * 100);
             log.info(`📊 Progress: ${businessCount}/${maxResults} (${progress}%)`);
         }
+        // Fallback: if not search or biz (likely a block or redirect), save HTML for diagnostics
+        else {
+            const html = await page.content();
+            await Actor.setValue('DEBUG_BLOCK_HTML', html, { contentType: 'text/html' });
+            log.warning('🐛 DEBUG: Saved block/redirect HTML to "DEBUG_BLOCK_HTML"');
+        }
     },
 
     async failedRequestHandler({ request, log }) {
@@ -458,6 +462,9 @@ const crawler = new PlaywrightCrawler({
             const width = 1280 + Math.floor(Math.random() * 200);
             const height = 800 + Math.floor(Math.random() * 200);
             await page.setViewportSize({ width, height });
+
+            // Navigate earlier to allow challenge pages to complete JS
+            gotoOptions.waitUntil = 'domcontentloaded';
 
             // Add delay between requests
             if (delayBetweenRequests > 0) {
