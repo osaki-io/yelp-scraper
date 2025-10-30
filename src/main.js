@@ -61,64 +61,53 @@ const buildSearchUrl = (query, loc, offset = 0) => {
     return `https://www.yelp.com/search?${params.toString()}`;
 };
 
-// Extract business data from search results
+// Extract business data from search result cards (new Yelp layout)
 const extractBusinessFromSearchCard = ($, element) => {
     const $card = $(element);
 
-    // Get business URL
-    const businessLink = $card.find('a[href*="/biz/"]').first().attr('href');
+    // Business link (relative to yelp.com)
+    const businessLink = $card.find('a[href*="/biz/"]').filter((_, el) => {
+        const href = $(el).attr('href') || '';
+        return href.includes('/biz/');
+    }).first().attr('href');
+
     if (!businessLink) return null;
 
     const businessUrl = businessLink.startsWith('http')
-        ? businessLink
+        ? businessLink.split('?')[0]
         : `https://www.yelp.com${businessLink.split('?')[0]}`;
 
-    // Extract basic info
-    const businessName = $card.find('a[href*="/biz/"]').first().text().trim() ||
-                        $card.find('h3, h4').first().text().trim();
+    // Business name can live in multiple elements (ALT tag or anchor text)
+    const nameFromImg = $card.find('img[alt]').first().attr('alt');
+    const nameFromAnchor = $card.find('a[href*="/biz/"]').first().text();
+    const nameFromHeading = $card.find('h3, h4').first().text();
 
-    const ratingText = $card.find('[role="img"]').attr('aria-label') || '';
-    const ratingMatch = ratingText.match(/(\d+\.?\d*)\s*star/i);
+    const businessName = [nameFromImg, nameFromAnchor, nameFromHeading]
+        .map(value => (value || '').trim())
+        .find(value => value.length > 0) || null;
+
+    // Ratings are exposed via aria-label or bold span values
+    const ratingLabel = $card.find('[aria-label*="star rating"]').first().attr('aria-label') || '';
+    const ratingValueText = $card.find('span[data-font-weight="semibold"]').first().text().trim();
+    const ratingMatch = (ratingLabel || ratingValueText).match(/(\d+\.?\d*)/);
     const rating = ratingMatch ? parseFloat(ratingMatch[1]) : null;
 
-    const reviewText = $card.text();
-    const reviewMatch = reviewText.match(/(\d+)\s*review/i);
-    const reviewCount = reviewMatch ? parseInt(reviewMatch[1]) : 0;
+    // Review count text typically sits near the rating
+    let reviewCount = null;
+    const reviewCandidate = $card.find('span, p').filter((_, el) => {
+        const text = $(el).text().toLowerCase();
+        return text.includes('review');
+    }).first().text();
 
-    // Categories
-    const categories = [];
-    $card.find('a[href*="cflt="]').each((i, el) => {
-        const cat = $(el).text().trim();
-        if (cat && !categories.includes(cat)) {
-            categories.push(cat);
-        }
-    });
-
-    // Price range
-    let priceRange = null;
-    const priceText = $card.text();
-    const priceMatch = priceText.match(/\$+(?!\d)/);
-    if (priceMatch) {
-        priceRange = priceMatch[0];
+    const reviewMatch = reviewCandidate.match(/(\d+[,.]?\d*)\s*review/i);
+    if (reviewMatch) {
+        reviewCount = parseInt(reviewMatch[1].replace(/[,\.]/g, ''), 10);
     }
-
-    // Address
-    const addressParts = [];
-    $card.find('p').each((i, el) => {
-        const text = $(el).text().trim();
-        if (text && (text.includes(',') || /\d/.test(text))) {
-            addressParts.push(text);
-        }
-    });
-    const address = addressParts[0] || null;
 
     return {
         businessName,
         rating,
         reviewCount,
-        categories,
-        priceRange,
-        address,
         businessUrl
     };
 };
@@ -262,20 +251,15 @@ const crawler = new CheerioCrawler({
         if (url.includes('/search?')) {
             log.info(`🔍 Processing search page: ${url}`);
 
-            // Find business cards
+            // Find business cards on the current SERP
             const businesses = [];
-            $('div[class*="container"], li, div').each((i, element) => {
-                const $el = $(element);
-                // Look for elements with business links
-                if ($el.find('a[href*="/biz/"]').length > 0) {
-                    const business = extractBusinessFromSearchCard($, element);
-                    if (business && business.businessName && business.businessUrl) {
-                        // Create unique key for deduplication
-                        const key = `${business.businessName}|${business.address || business.businessUrl}`;
-                        if (!scrapedBusinesses.has(key) && businessCount < maxResults) {
-                            businesses.push(business);
-                            scrapedBusinesses.add(key);
-                        }
+            $('div[data-testid="serp-ia-card"], div[data-testid="searchResultBusiness"]').each((i, element) => {
+                const business = extractBusinessFromSearchCard($, element);
+                if (business && business.businessUrl) {
+                    const key = business.businessUrl;
+                    if (!scrapedBusinesses.has(key) && businessCount < maxResults) {
+                        businesses.push(business);
+                        scrapedBusinesses.add(key);
                     }
                 }
             });
