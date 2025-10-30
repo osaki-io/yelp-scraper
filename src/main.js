@@ -255,9 +255,6 @@ const crawler = new PlaywrightCrawler({
     
     // Playwright-specific browser options
     launchContext: {
-        launcher: Actor.isAtHome() 
-            ? await Actor.newClient().getDefaultLauncher()
-            : undefined,
         launchOptions: {
             headless: true,
             args: [
