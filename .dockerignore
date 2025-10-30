@@ -1,0 +1,9 @@
+node_modules
+.git
+.gitignore
+.DS_Store
+storage
+apify_storage
+*.log
+.env
+.env.local

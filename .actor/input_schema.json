@@ -1,0 +1,65 @@
+{
+  "title": "Yelp Business Scraper Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "searchQuery": {
+      "title": "Search Query",
+      "type": "string",
+      "description": "What to search for (e.g., 'pizza', 'coffee shops', 'dentists')",
+      "editor": "textfield",
+      "example": "pizza"
+    },
+    "location": {
+      "title": "Location",
+      "type": "string",
+      "description": "City, state, or zip code (e.g., 'San Francisco, CA', 'New York', '10001')",
+      "editor": "textfield",
+      "example": "San Francisco, CA"
+    },
+    "maxResults": {
+      "title": "Maximum Results",
+      "type": "integer",
+      "description": "Maximum number of businesses to scrape (1-500)",
+      "editor": "number",
+      "default": 50,
+      "minimum": 1,
+      "maximum": 500
+    },
+    "includeReviews": {
+      "title": "Include Reviews",
+      "type": "boolean",
+      "description": "Extract top reviews for each business (may increase runtime)",
+      "editor": "checkbox",
+      "default": true
+    },
+    "maxReviewsPerBusiness": {
+      "title": "Max Reviews Per Business",
+      "type": "integer",
+      "description": "Number of reviews to extract per business (1-20)",
+      "editor": "number",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 20
+    },
+    "delayBetweenRequests": {
+      "title": "Delay Between Requests (ms)",
+      "type": "integer",
+      "description": "Delay in milliseconds between requests to avoid rate limiting",
+      "editor": "number",
+      "default": 2000,
+      "minimum": 500,
+      "maximum": 10000
+    },
+    "maxRetries": {
+      "title": "Max Retries",
+      "type": "integer",
+      "description": "Maximum retry attempts for failed requests",
+      "editor": "number",
+      "default": 3,
+      "minimum": 0,
+      "maximum": 5
+    }
+  },
+  "required": ["searchQuery", "location"]
+}

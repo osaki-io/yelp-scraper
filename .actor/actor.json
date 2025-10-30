@@ -1,0 +1,65 @@
+{
+  "actorSpecification": 1,
+  "name": "yelp-scraper",
+  "title": "Yelp Business Scraper",
+  "description": "Fast, production-quality scraper for Yelp business data. Extracts business info, ratings, reviews, photos, hours, and more using Cheerio for optimal performance (<0.017 CU per 1K results).",
+  "version": "1.0",
+  "meta": {
+    "templateId": "custom"
+  },
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": {
+      "actorSpecification": 1,
+      "title": "Scraped Businesses",
+      "views": {
+        "overview": {
+          "title": "Business Overview",
+          "transformation": {
+            "fields": [
+              "businessName",
+              "rating",
+              "reviewCount",
+              "priceRange",
+              "categories",
+              "address",
+              "phone",
+              "url"
+            ]
+          },
+          "display": {
+            "component": "table",
+            "properties": {
+              "businessName": {
+                "label": "Business Name"
+              },
+              "rating": {
+                "label": "Rating"
+              },
+              "reviewCount": {
+                "label": "Reviews"
+              },
+              "priceRange": {
+                "label": "Price"
+              },
+              "categories": {
+                "label": "Categories"
+              },
+              "address": {
+                "label": "Address"
+              },
+              "phone": {
+                "label": "Phone"
+              },
+              "url": {
+                "label": "Yelp URL",
+                "format": "link"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "dockerfile": "./Dockerfile"
+}

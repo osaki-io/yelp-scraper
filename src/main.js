@@ -1,0 +1,398 @@
+// Yelp Business Scraper Actor
+// Production-quality scraper using Cheerio for optimal performance
+
+import { Actor } from 'apify';
+import { CheerioCrawler, Dataset } from 'crawlee';
+
+// User agent rotation for anti-scraping
+const USER_AGENTS = [
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+// Get random user agent
+const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+
+// Initialize the Actor
+await Actor.init();
+
+// Get input
+const input = await Actor.getInput() || {};
+const {
+    searchQuery,
+    location,
+    maxResults = 50,
+    includeReviews = true,
+    maxReviewsPerBusiness = 5,
+    delayBetweenRequests = 2000,
+    maxRetries = 3
+} = input;
+
+// Validation
+if (!searchQuery || !location) {
+    throw new Error('❌ Both searchQuery and location are required!');
+}
+
+Actor.log.info('🚀 Starting Yelp Business Scraper');
+Actor.log.info(`   Search: "${searchQuery}" in "${location}"`);
+Actor.log.info(`   Max Results: ${maxResults}`);
+Actor.log.info(`   Include Reviews: ${includeReviews ? 'Yes' : 'No'}`);
+
+// Track scraped businesses for deduplication
+const scrapedBusinesses = new Set();
+let businessCount = 0;
+
+// Build Yelp search URL
+const buildSearchUrl = (query, loc, offset = 0) => {
+    const params = new URLSearchParams({
+        find_desc: query,
+        find_loc: loc,
+        start: offset.toString()
+    });
+    return `https://www.yelp.com/search?${params.toString()}`;
+};
+
+// Extract business data from search results
+const extractBusinessFromSearchCard = ($, element) => {
+    const $card = $(element);
+
+    // Get business URL
+    const businessLink = $card.find('a[href*="/biz/"]').first().attr('href');
+    if (!businessLink) return null;
+
+    const businessUrl = businessLink.startsWith('http')
+        ? businessLink
+        : `https://www.yelp.com${businessLink.split('?')[0]}`;
+
+    // Extract basic info
+    const businessName = $card.find('a[href*="/biz/"]').first().text().trim() ||
+                        $card.find('h3, h4').first().text().trim();
+
+    const ratingText = $card.find('[role="img"]').attr('aria-label') || '';
+    const ratingMatch = ratingText.match(/(\d+\.?\d*)\s*star/i);
+    const rating = ratingMatch ? parseFloat(ratingMatch[1]) : null;
+
+    const reviewText = $card.text();
+    const reviewMatch = reviewText.match(/(\d+)\s*review/i);
+    const reviewCount = reviewMatch ? parseInt(reviewMatch[1]) : 0;
+
+    // Categories
+    const categories = [];
+    $card.find('a[href*="cflt="]').each((i, el) => {
+        const cat = $(el).text().trim();
+        if (cat && !categories.includes(cat)) {
+            categories.push(cat);
+        }
+    });
+
+    // Price range
+    let priceRange = null;
+    const priceText = $card.text();
+    const priceMatch = priceText.match(/\$+(?!\d)/);
+    if (priceMatch) {
+        priceRange = priceMatch[0];
+    }
+
+    // Address
+    const addressParts = [];
+    $card.find('p').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text && (text.includes(',') || /\d/.test(text))) {
+            addressParts.push(text);
+        }
+    });
+    const address = addressParts[0] || null;
+
+    return {
+        businessName,
+        rating,
+        reviewCount,
+        categories,
+        priceRange,
+        address,
+        businessUrl
+    };
+};
+
+// Extract detailed data from business page
+const extractBusinessDetails = ($, url) => {
+    const businessName = $('h1').first().text().trim();
+
+    // Rating and review count
+    const ratingText = $('[role="img"]').attr('aria-label') || '';
+    const ratingMatch = ratingText.match(/(\d+\.?\d*)\s*star/i);
+    const rating = ratingMatch ? parseFloat(ratingMatch[1]) : null;
+
+    const reviewCountText = $('body').text();
+    const reviewMatch = reviewCountText.match(/(\d+)\s*review/i);
+    const reviewCount = reviewMatch ? parseInt(reviewMatch[1]) : 0;
+
+    // Categories
+    const categories = [];
+    $('a[href*="cflt="]').each((i, el) => {
+        const cat = $(el).text().trim();
+        if (cat && !categories.includes(cat)) {
+            categories.push(cat);
+        }
+    });
+
+    // Price range
+    let priceRange = null;
+    const priceElements = $('span').filter((i, el) => {
+        const text = $(el).text().trim();
+        return /^\$+$/.test(text);
+    });
+    if (priceElements.length > 0) {
+        priceRange = priceElements.first().text().trim();
+    }
+
+    // Address
+    let address = null;
+    $('p, div, span').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text.includes(',') && /\d/.test(text) && text.length < 200 && text.split(',').length >= 2) {
+            if (!address || text.length < address.length) {
+                address = text;
+            }
+        }
+    });
+
+    // Phone
+    let phone = null;
+    $('p, div, span, a').each((i, el) => {
+        const text = $(el).text().trim();
+        const phoneMatch = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+        if (phoneMatch && !phone) {
+            phone = phoneMatch[0];
+        }
+    });
+
+    // Hours
+    const hours = [];
+    $('tbody tr, div[class*="hours"] p, div[class*="businessHours"] p').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text && (text.match(/Mon|Tue|Wed|Thu|Fri|Sat|Sun/i))) {
+            hours.push(text);
+        }
+    });
+
+    // Photo URLs
+    const photos = [];
+    $('img[src*="bphoto"]').each((i, el) => {
+        const src = $(el).attr('src');
+        if (src && !photos.includes(src)) {
+            photos.push(src);
+        }
+    });
+
+    return {
+        businessName,
+        rating,
+        reviewCount,
+        categories: categories.length > 0 ? categories : null,
+        priceRange,
+        address,
+        phone,
+        hours: hours.length > 0 ? hours : null,
+        photos: photos.slice(0, 10), // Limit to 10 photos
+        url
+    };
+};
+
+// Extract reviews from business page
+const extractReviews = ($, maxReviews) => {
+    const reviews = [];
+
+    $('div[class*="review"], li[class*="review"]').slice(0, maxReviews).each((i, el) => {
+        const $review = $(el);
+
+        const author = $review.find('a[href*="/user_details"]').first().text().trim();
+
+        const ratingText = $review.find('[role="img"]').attr('aria-label') || '';
+        const ratingMatch = ratingText.match(/(\d+\.?\d*)\s*star/i);
+        const rating = ratingMatch ? parseFloat(ratingMatch[1]) : null;
+
+        const text = $review.find('p[class*="comment"], span[class*="comment"]').first().text().trim() ||
+                    $review.find('p').first().text().trim();
+
+        let date = null;
+        $review.find('span').each((j, span) => {
+            const spanText = $(span).text().trim();
+            if (spanText.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) {
+                date = spanText;
+            }
+        });
+
+        if (text && text.length > 20) {
+            reviews.push({
+                author: author || 'Anonymous',
+                rating,
+                text: text.length > 500 ? text.substring(0, 500) + '...' : text,
+                date
+            });
+        }
+    });
+
+    return reviews;
+};
+
+// Configure the crawler
+const crawler = new CheerioCrawler({
+    maxRequestsPerCrawl: maxResults + 50, // Buffer for search pages
+    maxConcurrency: 1, // Sequential to respect rate limits
+    maxRequestRetries: maxRetries,
+    requestHandlerTimeoutSecs: 60,
+
+    navigationTimeoutSecs: 60,
+
+    async requestHandler({ request, $, log }) {
+        const url = request.url;
+
+        // Handle search results page
+        if (url.includes('/search?')) {
+            log.info(`🔍 Processing search page: ${url}`);
+
+            // Find business cards
+            const businesses = [];
+            $('div[class*="container"], li, div').each((i, element) => {
+                const $el = $(element);
+                // Look for elements with business links
+                if ($el.find('a[href*="/biz/"]').length > 0) {
+                    const business = extractBusinessFromSearchCard($, element);
+                    if (business && business.businessName && business.businessUrl) {
+                        // Create unique key for deduplication
+                        const key = `${business.businessName}|${business.address || business.businessUrl}`;
+                        if (!scrapedBusinesses.has(key) && businessCount < maxResults) {
+                            businesses.push(business);
+                            scrapedBusinesses.add(key);
+                        }
+                    }
+                }
+            });
+
+            log.info(`   Found ${businesses.length} unique businesses on this page`);
+
+            // Enqueue business detail pages
+            for (const business of businesses) {
+                if (businessCount >= maxResults) break;
+
+                await crawler.addRequests([{
+                    url: business.businessUrl,
+                    userData: { business, type: 'detail' }
+                }]);
+
+                businessCount++;
+            }
+
+            // Check if we need more results
+            if (businessCount < maxResults) {
+                // Look for next page
+                const nextButton = $('a[aria-label*="Next"]').attr('href');
+                if (nextButton) {
+                    const nextUrl = nextButton.startsWith('http')
+                        ? nextButton
+                        : `https://www.yelp.com${nextButton}`;
+
+                    log.info(`   Navigating to next page...`);
+                    await crawler.addRequests([{
+                        url: nextUrl,
+                        userData: { type: 'search' }
+                    }]);
+                } else {
+                    log.info(`   No more search pages found`);
+                }
+            }
+        }
+        // Handle business detail page
+        else if (url.includes('/biz/')) {
+            log.info(`📄 Processing business: ${url}`);
+
+            const businessData = extractBusinessDetails($, url);
+
+            // Extract reviews if enabled
+            let reviews = [];
+            if (includeReviews) {
+                reviews = extractReviews($, maxReviewsPerBusiness);
+            }
+
+            // Prepare final result
+            const result = {
+                businessName: businessData.businessName,
+                rating: businessData.rating,
+                reviewCount: businessData.reviewCount,
+                categories: businessData.categories,
+                priceRange: businessData.priceRange,
+                address: businessData.address,
+                phone: businessData.phone,
+                hours: businessData.hours,
+                photos: businessData.photos,
+                reviews: reviews.length > 0 ? reviews : null,
+                url: businessData.url,
+                scrapedAt: new Date().toISOString()
+            };
+
+            // Save to dataset
+            await Actor.pushData(result);
+
+            log.info(`   ✅ Saved: ${businessData.businessName}`);
+            log.info(`   Rating: ${businessData.rating}⭐ | Reviews: ${businessData.reviewCount}`);
+
+            // Progress update
+            const progress = Math.round((businessCount / maxResults) * 100);
+            log.info(`📊 Progress: ${businessCount}/${maxResults} (${progress}%)`);
+        }
+    },
+
+    async failedRequestHandler({ request, log }) {
+        log.error(`❌ Request failed after ${maxRetries} retries: ${request.url}`);
+        log.error(`   Error: ${request.errorMessages?.join(', ')}`);
+    },
+
+    // Pre-navigation hook for user agent rotation
+    preNavigationHooks: [
+        async ({ request, session }, gotoOptions) => {
+            gotoOptions.headers = {
+                ...gotoOptions.headers,
+                'User-Agent': getRandomUserAgent(),
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Referer': 'https://www.yelp.com/'
+            };
+
+            // Add delay between requests
+            if (delayBetweenRequests > 0) {
+                await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
+            }
+        }
+    ]
+});
+
+// Start crawling
+try {
+    const startUrl = buildSearchUrl(searchQuery, location, 0);
+    Actor.log.info(`🔗 Starting URL: ${startUrl}`);
+
+    await crawler.run([{
+        url: startUrl,
+        userData: { type: 'search' }
+    }]);
+
+    Actor.log.info('\n🎉 Scraping completed!');
+    Actor.log.info(`   Total businesses scraped: ${businessCount}`);
+    Actor.log.info(`   Unique businesses: ${scrapedBusinesses.size}`);
+
+    // Get dataset info
+    const dataset = await Actor.openDataset();
+    const info = await dataset.getInfo();
+    Actor.log.info(`   Dataset items: ${info.itemCount}`);
+
+} catch (error) {
+    Actor.log.error(`\n❌ Fatal error: ${error.message}`);
+    await Actor.fail(error.message);
+}
+
+// Exit the Actor
+await Actor.exit();
