@@ -36,10 +36,10 @@ if (!searchQuery || !location) {
     throw new Error('❌ Both searchQuery and location are required!');
 }
 
-Actor.log.info('🚀 Starting Yelp Business Scraper');
-Actor.log.info(`   Search: "${searchQuery}" in "${location}"`);
-Actor.log.info(`   Max Results: ${maxResults}`);
-Actor.log.info(`   Include Reviews: ${includeReviews ? 'Yes' : 'No'}`);
+console.log('🚀 Starting Yelp Business Scraper');
+console.log(`   Search: "${searchQuery}" in "${location}"`);
+console.log(`   Max Results: ${maxResults}`);
+console.log(`   Include Reviews: ${includeReviews ? 'Yes' : 'No'}`);
 
 // Track scraped businesses for deduplication
 const scrapedBusinesses = new Set();
@@ -373,24 +373,24 @@ const crawler = new CheerioCrawler({
 // Start crawling
 try {
     const startUrl = buildSearchUrl(searchQuery, location, 0);
-    Actor.log.info(`🔗 Starting URL: ${startUrl}`);
+    console.log(`🔗 Starting URL: ${startUrl}`);
 
     await crawler.run([{
         url: startUrl,
         userData: { type: 'search' }
     }]);
 
-    Actor.log.info('\n🎉 Scraping completed!');
-    Actor.log.info(`   Total businesses scraped: ${businessCount}`);
-    Actor.log.info(`   Unique businesses: ${scrapedBusinesses.size}`);
+    console.log('\n🎉 Scraping completed!');
+    console.log(`   Total businesses scraped: ${businessCount}`);
+    console.log(`   Unique businesses: ${scrapedBusinesses.size}`);
 
     // Get dataset info
     const dataset = await Actor.openDataset();
     const info = await dataset.getInfo();
-    Actor.log.info(`   Dataset items: ${info.itemCount}`);
+    console.log(`   Dataset items: ${info.itemCount}`);
 
 } catch (error) {
-    Actor.log.error(`\n❌ Fatal error: ${error.message}`);
+    console.error(`\n❌ Fatal error: ${error.message}`);
     await Actor.fail(error.message);
 }
 
